@@ -161,6 +161,36 @@ EOF
 
 path_of() { ensure_base; echo "$BASE/$1"; }
 
+check_prompt_ready() {
+  local session="$1"
+  local prompt="$2"
+  ensure_base
+  local out="$BASE/$session/stdout"
+  [[ -r "$out" ]] || die "no stdout at $out (is the session running?)"
+
+  # Get the last part of output, process control characters, then remove trailing whitespace
+  # - Strip ANSI escape sequences
+  # - Process backspaces by keeping only content after last carriage return
+  # - Remove control characters (bell (^G), backspace (^H), delete)
+  # - Remove trailing whitespace
+  local last_content
+  last_content=$(tail -c 200 "$out" \
+    | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' \
+    | tr '\r' '\n' \
+    | tail -n 1 \
+    | tr -d '\007\010\177' \
+    | sed 's/[[:space:]]*$//')
+
+  # Check if it ends with the prompt
+  if [[ "$last_content" != *"$prompt" ]]; then
+    echo "Session not ready. Expected prompt '$prompt' at end, but found:" >&2
+    echo "" >&2
+    printf "%s\n" "$last_content" | cat -v >&2
+    echo "" >&2
+    die "Session may contain unprocessed input"
+  fi
+}
+
 need teetty
 need tail
 need grep
@@ -205,6 +235,8 @@ case "${1:-}" in
         # Shorthand: if the first token ends with '>', treat it as PROMPT>
         if [[ "$subcmd" == *\> ]]; then
           prompt="$subcmd"; shift || true
+          # Check that the prompt is at the end of the output (session is ready)
+          check_prompt_ready "$session" "$prompt"
           # If there are remaining args, write them as a single line.
           # Otherwise, read from stdin and forward to the REPL.
           if [[ $# -gt 0 ]]; then
