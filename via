@@ -58,10 +58,11 @@ write_session() {
 }
 
 # Tail helper supporting combinations:
+#   -f                       (follow output in real-time)
 #   -n N                     (controls window size, default 100)
 #   --since PROMPT           (last lines since the most recent prompt)
 #   --delim PROMPT           (stanza since the most recent prompt)
-# You may combine -n with either --since or --delim.
+# You may combine -n with either --since or --delim or -f.
 
 tail_stanza() {
   local session="$1"; shift || true
@@ -69,13 +70,17 @@ tail_stanza() {
   local out="$BASE/$session/stdout"
   [[ -r "$out" ]] || die "no stdout at $out"
 
-  local n="" mode="" prompt=""
+  local n="" mode="" prompt="" follow=""
 
-  # Parse flags (allow -n combined with one of --since/--delim)
+  # Parse flags (allow -n combined with one of --since/--delim/-f)
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -f)
+        follow="yes"
+        shift
+        ;;
       -n)
-        [[ -n "${2:-}" ]] || die "usage: via ${session} tail -n <N> [--since PROMPT|--delim PROMPT]"
+        [[ -n "${2:-}" ]] || die "usage: via ${session} tail -n <N> [--since PROMPT|--delim PROMPT|-f]"
         n="${2}"
         shift 2
         ;;
@@ -94,6 +99,17 @@ tail_stanza() {
         ;;
     esac
   done
+
+  # Handle -f flag
+  if [[ -n "$follow" ]]; then
+    [[ -z "$mode" ]] || die "-f cannot be combined with --since or --delim"
+    if [[ -n "$n" ]]; then
+      tail -f -n "$n" "$out"
+    else
+      tail -f "$out"
+    fi
+    return 0
+  fi
 
   # Determine window size
   local window
@@ -137,6 +153,7 @@ usage:
 low-level usage:
   via <session> write [line...]         # write (reads stdin if none)
   via <session> tail -n N               # tail last N lines
+  via <session> tail -f [-n N]          # follow output in real-time
   via <session> tail --since 'PROMPT>'  # tail since last PROMPT>
   via <session> tail --delim 'PROMPT>'  # last stanza since PROMPT>
   via <session> path                    # show session path
@@ -153,6 +170,7 @@ usage for '${session}':
 low-level usage:
   via ${session} write [line...]         # write (reads stdin if none)
   via ${session} tail -n N               # tail last N lines
+  via ${session} tail -f [-n N]          # follow output in real-time
   via ${session} tail --since 'PROMPT>'  # tail since last PROMPT>
   via ${session} tail --delim 'PROMPT>'  # last stanza since PROMPT>
   via ${session} path                    # show session path
