@@ -1,0 +1,16 @@
+[package]
+name = "via"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Rehno Lindeque"]
+description = "Issue commands across multiple interactive CLI sessions"
+
+[dependencies]
+anyhow = "1.0"
+regex = "1"
+ctrlc = "3.4"
+
+[[bin]]
+name = "via"
+path = "src/main.rs"

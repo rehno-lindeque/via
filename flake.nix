@@ -1,5 +1,5 @@
 {
-  description = "via - Hacky script for use with teetty";
+  description = "via - Issue commands across multiple interactive CLI sessions";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/pull/459579/head";
@@ -34,6 +34,11 @@
         {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
+              cargo
+              rustc
+              rust-analyzer
+              rustfmt
+              clippy
               teetty
             ];
             inputsFrom = [ self.packages.${system}.default ];

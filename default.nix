@@ -1,49 +1,35 @@
 { lib
-, stdenv
+, rustPlatform
 , makeWrapper
 , teetty
 , coreutils
-, gnugrep
-, gnused
-, findutils
 }:
 
-stdenv.mkDerivation rec {
+rustPlatform.buildRustPackage rec {
   pname = "via";
   version = "0.1.0";
 
   src = ./.;
 
+  cargoLock = {
+    lockFile = ./Cargo.lock;
+  };
+
   nativeBuildInputs = [ makeWrapper ];
 
-  buildInputs = [ teetty ];
-
-  dontBuild = true;
-
-  installPhase = ''
-    runHook preInstall
-
-    mkdir -p $out/bin
-    cp via $out/bin/via
-    chmod +x $out/bin/via
-
-    # Wrap the script to ensure all dependencies are in PATH
+  # Wrap the binary to ensure runtime dependencies are in PATH
+  postInstall = ''
     wrapProgram $out/bin/via \
       --prefix PATH : ${lib.makeBinPath [
-        teetty
-        coreutils  # provides tail, tac, mkdir, etc.
-        gnugrep    # provides grep
-        gnused     # provides sed
-        findutils  # provides find
+        teetty      # Required for 'via run' command
+        coreutils   # Required for 'tail' in tail.rs
       ]}
-
-    runHook postInstall
   '';
 
   meta = with lib; {
-    description = "Hacky script for use with teetty";
-    homepage = "https://github.com/yourusername/via";
-    license = licenses.mit;
+    description = "Issue commands across multiple interactive CLI sessions";
+    homepage = "https://github.com/rehno-lindeqe/via";
+    license = licenses.asl20;
     maintainers = [ ];
     platforms = platforms.unix;
     mainProgram = "via";
