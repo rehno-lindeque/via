@@ -131,15 +131,15 @@ usage:
   via                                   # list sessions
   via help                              # this help
   via <session> help                    # help for a specific session name
-  via <session> run -- <cmd> ...        # start <name> session (interactive)
+  via <session> run -- <cmd> ...        # start a new named (interactive) session running <cmd>
+  via <session> 'PROMPT>' [line...]     # write input and read output in one command
+
+low-level usage:
   via <session> write [line...]         # write (reads stdin if none)
   via <session> tail -n N               # tail last N lines
   via <session> tail --since 'PROMPT>'  # tail since last PROMPT>
   via <session> tail --delim 'PROMPT>'  # last stanza since PROMPT>
   via <session> path                    # show session path
-
-shorthand usage:
-  via <session> 'PROMPT>' [line...]     # write input and read output in one command
 EOF
 }
 
@@ -148,14 +148,14 @@ show_session_usage() {
   cat <<EOF
 usage for '${session}':
   via ${session} help                    # help for a specific session session
+  via ${session} 'PROMPT>' [line...]     # write input and read output in one command
+
+low-level usage:
   via ${session} write [line...]         # write (reads stdin if none)
   via ${session} tail -n N               # tail last N lines
   via ${session} tail --since 'PROMPT>'  # tail since last PROMPT>
   via ${session} tail --delim 'PROMPT>'  # last stanza since PROMPT>
   via ${session} path                    # show session path
-
-shorthand usage:
-  via ${session} 'PROMPT>' [line...]     # write input and read output in one command
 EOF
 }
 
