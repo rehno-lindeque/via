@@ -40,8 +40,14 @@ fn run() -> Result<i32> {
     }
 
     if args.is_empty() {
-        // via → list sessions
-        session::list_sessions()?;
+        // via → list sessions (table format)
+        session::list_sessions(false)?;
+        return Ok(0);
+    }
+
+    // Check for --simple flag before other processing
+    if args[0] == "--simple" {
+        session::list_sessions(true)?;
         return Ok(0);
     }
 
@@ -98,7 +104,7 @@ fn run() -> Result<i32> {
 
 fn show_usage_global() {
     println!(r#"usage:
-  via                                   # list sessions
+  via [--simple]                        # list sessions (tabular format by default)
   via help                              # this help
   via <session> help                    # help for a specific session name
   via <session> run -- <cmd> ...        # start a new named (interactive) session running <cmd>
@@ -141,6 +147,16 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
     let dir = session::session_path(session)?;
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create directory {}", dir.display()))?;
+
+    // Write metadata files
+    let command = args[1..].join(" ");
+    std::fs::write(dir.join("command"), &command)
+        .with_context(|| "failed to write command metadata")?;
+
+    if let Ok(cwd) = env::current_dir() {
+        std::fs::write(dir.join("cwd"), cwd.to_string_lossy().as_bytes())
+            .with_context(|| "failed to write cwd metadata")?;
+    }
 
     let stdin_path = dir.join("stdin");
     let stdout_path = dir.join("stdout");

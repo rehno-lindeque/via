@@ -112,7 +112,7 @@ pub fn wait_for_prompt(session: &str, prompt: &str) -> Result<()> {
 }
 
 /// Process terminal output to clean up control characters and ANSI sequences
-fn process_terminal_output(data: &[u8]) -> Result<String> {
+pub fn process_terminal_output(data: &[u8]) -> Result<String> {
     // Convert to string (lossy conversion for invalid UTF-8)
     let mut content = String::from_utf8_lossy(data).to_string();
 

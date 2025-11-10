@@ -31,15 +31,17 @@ Interact both from yet another terminal
 ```bash
 $ # Check what sessions are running
 $ via
-nix
-python
+Session  Prompt Line  Working Directory  Command
+nix      nix-repl>    /home/me/projects  nix repl
+python   >>>          /home/me/projects  python
 
 $ # Send a command and get the result
 $ via nix 'nix-repl>' '1 + 1'
 nix-repl> 1 + 1
 2
 
-$ via python '>>>' 'print("hello")'
+$ # Pipe commands into the repl
+$ echo 'print("hello")' | via python '>>>'
 >>> print("hello")
 hello
 
@@ -62,13 +64,13 @@ $ via --help
 ### Usage
 
 ```
-via                                   # list sessions
+via [--simple]                        # list sessions
 via help                              # show help
 via <session> run -- <cmd> ...        # start a new named session
 via <session> 'PROMPT>' [line...]     # write input and read output in one command
 ```
 
-Low-level syntax:
+Low-level commands:
 
 ```
 via <session> write [line...]         # write to session stdin
