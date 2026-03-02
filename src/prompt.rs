@@ -64,33 +64,43 @@ pub fn check_prompt_ready(session: &str, prompt: &str) -> Result<()> {
     Ok(())
 }
 
-/// Wait for a new prompt to appear after the current position
-pub fn wait_for_prompt(session: &str, prompt: &str) -> Result<()> {
+/// Wait for a prompt to appear in session output.
+///
+/// If `after_pos` is Some, waits for new output beyond that position.
+/// If None, checks the current output immediately (useful for --wait on startup).
+/// `timeout_secs` controls how long to poll (default: 10s).
+pub fn wait_for_prompt(session: &str, prompt: &str, after_pos: Option<u64>, timeout_secs: f64) -> Result<()> {
     let stdout_path = session::stdout_path(session)?;
 
-    if !stdout_path.exists() {
-        anyhow::bail!("no stdout at {} (is the session running?)", stdout_path.display());
-    }
+    let initial_size = match after_pos {
+        Some(pos) => pos,
+        None => {
+            // No baseline — check from position 0 so any prompt in
+            // current output is found immediately
+            0
+        }
+    };
 
-    // Get initial file size
-    let mut file = File::open(&stdout_path)
-        .with_context(|| format!("failed to open {}", stdout_path.display()))?;
-    let initial_size = file.seek(SeekFrom::End(0))?;
-
-    // Poll for new content with prompt
-    let max_attempts = 100; // 10 seconds total
     let poll_interval = Duration::from_millis(100);
+    let max_attempts = ((timeout_secs / 0.1) as u64).max(1);
 
     for _ in 0..max_attempts {
         thread::sleep(poll_interval);
 
-        let mut file = File::open(&stdout_path)
-            .with_context(|| format!("failed to open {}", stdout_path.display()))?;
+        // The stdout file may not exist yet if teetty is still starting up
+        if !stdout_path.exists() {
+            continue;
+        }
+
+        let mut file = match File::open(&stdout_path) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
         let current_size = file.seek(SeekFrom::End(0))?;
 
-        // Check if file has grown
+        // Check if file has content beyond baseline
         if current_size > initial_size {
-            // Read the new content plus some context
+            // Read the last 200 bytes
             let read_size = std::cmp::min(200, current_size);
             let start_pos = current_size - read_size;
 
@@ -107,7 +117,7 @@ pub fn wait_for_prompt(session: &str, prompt: &str) -> Result<()> {
         }
     }
 
-    anyhow::bail!("timeout waiting for prompt '{}'", prompt)
+    anyhow::bail!("timeout waiting for prompt '{}' (after {}s)", prompt, timeout_secs)
 }
 
 /// Strip all ANSI escape sequences from raw bytes using the vte parser.

@@ -78,6 +78,10 @@ fn run() -> Result<i32> {
             cmd_run(&session_name, remaining_args)?;
             Ok(0)
         }
+        "wait" => {
+            cmd_wait(&session_name, remaining_args)?;
+            Ok(0)
+        }
         "write" => {
             cmd_write(&session_name, remaining_args)?;
             Ok(0)
@@ -104,11 +108,12 @@ fn run() -> Result<i32> {
 
 fn show_usage_global() {
     println!(r#"usage:
-  via [--simple]                        # list sessions (tabular format by default)
-  via help                              # this help
-  via <session> help                    # help for a specific session name
-  via <session> run -- <cmd> ...        # start a new named (interactive) session running <cmd>
-  via <session> 'PROMPT>' [line...]     # write input and read output in one command
+  via [--simple]                                # list sessions (tabular format by default)
+  via help                                      # this help
+  via <session> help                            # help for a specific session name
+  via <session> run -- <cmd> ...                # start a new session running <cmd> (blocks)
+  via <session> wait 'PROMPT>' [--timeout N]    # wait for prompt to appear in output
+  via <session> 'PROMPT>' [--timeout N] [line]  # write input and read output in one command
 
 low-level usage:
   via <session> write [line...]         # write (reads stdin if none)
@@ -134,14 +139,17 @@ low-level usage:
 }
 
 fn cmd_run(session: &str, args: &[String]) -> Result<()> {
-    // Expect args to start with "--"
-    if args.is_empty() || args[0] != "--" {
-        anyhow::bail!("usage: via {} run -- <command> [args...]", session);
+    // Expect "--" separator and at least one command arg
+    let separator_pos = args.iter().position(|a| a == "--");
+    match separator_pos {
+        None => anyhow::bail!("usage: via {} run -- <command> [args...]", session),
+        Some(pos) if pos + 1 >= args.len() => {
+            anyhow::bail!("usage: via {} run -- <command> [args...]", session)
+        }
+        _ => {}
     }
-
-    if args.len() < 2 {
-        anyhow::bail!("usage: via {} run -- <command> [args...]", session);
-    }
+    let separator_pos = separator_pos.unwrap();
+    let cmd_args = &args[separator_pos + 1..];
 
     // Get session directory and create it
     let dir = session::session_path(session)?;
@@ -149,7 +157,7 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
         .with_context(|| format!("failed to create directory {}", dir.display()))?;
 
     // Write metadata files
-    let command = args[1..].join(" ");
+    let command = cmd_args.join(" ");
     std::fs::write(dir.join("command"), &command)
         .with_context(|| "failed to write command metadata")?;
 
@@ -162,10 +170,10 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
     let stdout_path = dir.join("stdout");
 
     // Print session info
-    println!("[via] dir: {}", dir.display());
-    println!("[via] stdin: {}", stdin_path.display());
-    println!("[via] stdout: {}", stdout_path.display());
-    println!("[via] launching: {}", args[1..].join(" "));
+    eprintln!("[via] dir: {}", dir.display());
+    eprintln!("[via] stdin: {}", stdin_path.display());
+    eprintln!("[via] stdout: {}", stdout_path.display());
+    eprintln!("[via] launching: {}", command);
 
     // Build teetty command
     let mut cmd = std::process::Command::new("teetty");
@@ -175,32 +183,64 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
        .arg("--");
 
     // Add the command and args
-    for arg in &args[1..] {
+    for arg in cmd_args {
         cmd.arg(arg);
     }
 
     // Set up cleanup handler for Ctrl-C
     let dir_for_cleanup = dir.clone();
     ctrlc::set_handler(move || {
-        // Cleanup is handled by removing directory
         let _ = std::fs::remove_dir_all(&dir_for_cleanup);
-        std::process::exit(130); // Standard exit code for SIGINT
+        std::process::exit(130);
     }).ok();
 
-    // Run teetty (foreground, interactive)
+    // Run teetty in the foreground — blocks until the subprocess exits.
+    // This keeps teetty as a child of `via`, so killing `via` also
+    // terminates teetty.
     let status = cmd.status()
         .with_context(|| "failed to execute teetty (is it installed?)")?;
 
     // Cleanup directory after teetty exits
     std::fs::remove_dir_all(&dir).ok();
 
-    // Exit with same code as teetty
     if let Some(code) = status.code() {
         std::process::exit(code);
     } else {
-        // Killed by signal
         std::process::exit(1);
     }
+}
+
+/// Wait for a prompt to appear in an already-running session's output.
+fn cmd_wait(session: &str, args: &[String]) -> Result<()> {
+    if args.is_empty() {
+        anyhow::bail!("usage: via {} wait 'PROMPT>' [--timeout N]", session);
+    }
+
+    let prompt = &args[0];
+    let remaining = &args[1..];
+
+    // Parse optional --timeout
+    let mut timeout = DEFAULT_TIMEOUT;
+    let mut i = 0;
+    while i < remaining.len() {
+        match remaining[i].as_str() {
+            "--timeout" => {
+                if i + 1 >= remaining.len() {
+                    anyhow::bail!("--timeout requires a number");
+                }
+                timeout = remaining[i + 1].parse()
+                    .with_context(|| format!("invalid timeout: {}", remaining[i + 1]))?;
+                i += 2;
+            }
+            _ => {
+                anyhow::bail!("usage: via {} wait 'PROMPT>' [--timeout N]", session);
+            }
+        }
+    }
+
+    prompt::wait_for_prompt(session, prompt, None, timeout)?;
+    eprintln!("[via] ready (prompt detected)");
+    Ok(())
 }
 
 fn cmd_write(session: &str, args: &[String]) -> Result<()> {
@@ -217,16 +257,50 @@ fn cmd_path(session: &str) -> Result<()> {
     Ok(())
 }
 
+/// Default timeout for prompt detection (seconds)
+const DEFAULT_TIMEOUT: f64 = 30.0;
+
 fn cmd_prompt_shorthand(session: &str, prompt: &str, args: &[String]) -> Result<()> {
+    // Parse optional --timeout flag from the end of args
+    let (input_args, timeout) = parse_timeout_flag(args);
+
     // 1. Check that the prompt is at the end of the output
     prompt::check_prompt_ready(session, prompt)?;
 
-    // 2. Write input (from args or stdin)
-    fifo::write_session(session, args)?;
+    // 2. Record current file position before writing
+    let stdout_path = session::stdout_path(session)?;
+    let pos = {
+        use std::io::{Seek, SeekFrom};
+        let mut f = std::fs::File::open(&stdout_path)?;
+        f.seek(SeekFrom::End(0))?
+    };
 
-    // 3. Wait for the command to execute and new prompt to appear
-    prompt::wait_for_prompt(session, prompt)?;
+    // 3. Write input (from args or stdin)
+    fifo::write_session(session, &input_args)?;
 
-    // 4. Tail output since the delimiter
+    // 4. Wait for the command to execute and new prompt to appear
+    prompt::wait_for_prompt(session, prompt, Some(pos), timeout)?;
+
+    // 5. Tail output since the delimiter
     tail::tail_delim(session, prompt)
+}
+
+/// Extract --timeout N from the end of an argument list.
+/// Returns the remaining args and the timeout value.
+fn parse_timeout_flag(args: &[String]) -> (Vec<String>, f64) {
+    let mut remaining = args.to_vec();
+    let mut timeout = DEFAULT_TIMEOUT;
+
+    // Look for --timeout anywhere in the args
+    if let Some(idx) = remaining.iter().position(|a| a == "--timeout") {
+        if idx + 1 < remaining.len() {
+            if let Ok(t) = remaining[idx + 1].parse::<f64>() {
+                timeout = t;
+            }
+            remaining.remove(idx + 1);
+        }
+        remaining.remove(idx);
+    }
+
+    (remaining, timeout)
 }
