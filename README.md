@@ -15,36 +15,37 @@ Also, I'm not a Rust developer and leaned heavily on Claude to port my original 
 
 ## Example
 
-Start a Nix REPL session in one terminal:
+Start a Nix REPL session in the background:
 ```bash
-$ via nix run -- nix repl
+$ via run --delim 'nix-repl>' --bg -- nix repl
+[via] session: nix-00
 ...
 ```
 
-Start a python session in another terminal
-```
-$ via python run -- python
+Start a python session in another terminal:
+```bash
+$ via run --delim '>>>' --bg -- python
+[via] session: python-00
 ...
 ```
 
-Interact both from yet another terminal
+Interact with both from any terminal:
 ```bash
-$ # Check what sessions are running
+# Check what sessions are running
 $ via
-Session  Prompt Line  Working Directory  Command
-nix      nix-repl>    /home/me/projects  nix repl
-python   >>>          /home/me/projects  python
+Session    Prompt Line  Working Directory  Command
+nix-00     nix-repl>    /home/me/projects  nix repl
+python-00  >>>          /home/me/projects  python
 
-$ # Send a command and get the result
-$ via nix 'nix-repl>' '1 + 1'
+# Send a command and get the result (delimiter is stored)
+$ via nix-00 '1 + 1'
 nix-repl> 1 + 1
 2
 
-$ # Pipe commands into the repl
-$ echo 'print("hello")' | via python '>>>'
+# Pipe commands into the repl
+$ echo 'print("hello")' | via python-00
 >>> print("hello")
 hello
-
 ```
 
 This enables scripting interactive CLIs that weren't designed for automation.
@@ -53,7 +54,7 @@ This enables scripting interactive CLIs that weren't designed for automation.
 
 Only nix based installation is supported for right now and I assume you are familiar enough with it to not need help.
 
-Assuming you have nix flakes enabled you can try it out with
+Assuming you have nix flakes enabled you can try it out with:
 
 ```
 $ nix shell github:rehno-lindeque/via
@@ -61,24 +62,27 @@ $ via --help
 ```
 
 
-### Usage
+## Usage
 
 ```
-via [--simple]                        # list sessions
-via help                              # show help
-via <session> run -- <cmd> ...        # start a new named session
-via <session> 'PROMPT>' [line...]     # write input and read output in one command
+via [--simple]                                        # list sessions
+via help                                              # show help
+via run [--delim 'PROMPT>'] [--bg] -- <cmd> ...       # start session with auto-generated name
+via <session> run [--delim 'PROMPT>'] [--bg] -- <cmd> # start a named session
+via <session> wait [--until 'PROMPT>']                # wait for prompt (default: stored delim)
+via <session> [--delim 'PROMPT>'] [--timeout N] line  # write input and stream until delim
 ```
 
 Low-level commands:
 
 ```
-via <session> write [line...]         # write to session stdin
-via <session> tail -n N               # tail last N lines
-via <session> tail -f [-n N]          # follow output in real-time
-via <session> tail --since 'PROMPT>'  # tail since last PROMPT
-via <session> tail --delim 'PROMPT>'  # last stanza since PROMPT
-via <session> path                    # show session directory path
+via <session> write [line...]                         # write to session stdin
+via <session> tail -n N                               # tail last N lines
+via <session> tail -f [-n N]                          # follow output in real-time
+via <session> tail --since ['PROMPT>']                # tail since last prompt (bare = stored delim)
+via <session> tail --delim ['PROMPT>']                # last stanza (bare = stored delim)
+via <session> tail --until ['PROMPT>']                # stream until prompt (bare = stored delim)
+via <session> path                                    # show session directory path
 ```
 
 ## License

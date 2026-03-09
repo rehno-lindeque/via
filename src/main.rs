@@ -123,18 +123,18 @@ fn show_usage_global() {
   via [--simple]                                          # list sessions (tabular format by default)
   via help                                                # this help
   via <session> help                                      # help for a specific session name
-  via run [--delim D] [--bg] -- <cmd> ...                  # start session with auto-generated name
-  via <session> run [--delim D] [--bg] -- <cmd> ...       # start a named session running <cmd>
-  via <session> wait [--until PROMPT] [--timeout N]       # wait for prompt (default: stored delim)
-  via <session> [--delim D] [--timeout N] line            # write input and stream until delim
+  via run [--delim 'PROMPT>'] [--bg] -- <cmd> ...         # start session with auto-generated name
+  via <session> run [--delim 'PROMPT>'] [--bg] -- <cmd>   # start a named session running <cmd>
+  via <session> wait [--until 'PROMPT>'] [--timeout N]    # wait for prompt (default: stored delim)
+  via <session> [--delim 'PROMPT>'] [--timeout N] line    # write input and stream until delim
 
 low-level usage:
   via <session> write [line...]                           # write (reads stdin if none)
   via <session> tail -n N                                 # tail last N lines
   via <session> tail -f [-n N]                            # follow output in real-time
-  via <session> tail --since [PROMPT]                     # tail since last prompt (bare = stored delim)
-  via <session> tail --delim [PROMPT]                     # last stanza (bare = stored delim)
-  via <session> tail --until [PROMPT] [--timeout N]       # stream until prompt (bare = stored delim)
+  via <session> tail --since ['PROMPT>']                  # tail since last prompt (bare = stored delim)
+  via <session> tail --delim ['PROMPT>']                  # last stanza (bare = stored delim)
+  via <session> tail --until ['PROMPT>'] [--timeout N]    # stream until prompt (bare = stored delim)
   via <session> tail --since --until [--timeout N]        # stream from last prompt until next
   via <session> path                                      # show session path"#);
 }
@@ -142,16 +142,16 @@ low-level usage:
 fn show_session_usage(session: &str) {
     println!(r#"usage for '{session}':
   via {session} help                                      # help for a specific session
-  via {session} wait [--until PROMPT] [--timeout N]       # wait for prompt (default: stored delim)
-  via {session} [--delim D] [--timeout N] line            # write input and stream until delim
+  via {session} wait [--until 'PROMPT>'] [--timeout N]    # wait for prompt (default: stored delim)
+  via {session} [--delim 'PROMPT>'] [--timeout N] line    # write input and stream until delim
 
 low-level usage:
   via {session} write [line...]                           # write (reads stdin if none)
   via {session} tail -n N                                 # tail last N lines
   via {session} tail -f [-n N]                            # follow output in real-time
-  via {session} tail --since [PROMPT]                     # tail since last prompt (bare = stored delim)
-  via {session} tail --delim [PROMPT]                     # last stanza (bare = stored delim)
-  via {session} tail --until [PROMPT] [--timeout N]       # stream until prompt (bare = stored delim)
+  via {session} tail --since ['PROMPT>']                  # tail since last prompt (bare = stored delim)
+  via {session} tail --delim ['PROMPT>']                  # last stanza (bare = stored delim)
+  via {session} tail --until ['PROMPT>'] [--timeout N]    # stream until prompt (bare = stored delim)
   via {session} path                                      # show session path"#);
 }
 
