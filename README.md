@@ -81,7 +81,7 @@ via <session> tail -n N                               # tail last N lines
 via <session> tail -f [-n N]                          # follow output in real-time
 via <session> tail --since ['PROMPT>']                # tail since last prompt (bare = stored delim)
 via <session> tail --delim ['PROMPT>']                # last stanza (bare = stored delim)
-via <session> tail --until ['PROMPT>']                # stream until prompt (bare = stored delim)
+via <session> tail --until ['PROMPT>'] [--timeout N]  # stream until prompt (bare = stored delim)
 via <session> path                                    # show session directory path
 ```
 
