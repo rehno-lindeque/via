@@ -59,6 +59,15 @@ fn run() -> Result<i32> {
         return Ok(0);
     }
 
+    // via run -- <cmd> ... → auto-generate session name
+    if first_arg == "run" {
+        let remaining = &args[1..];
+        let session_name = generate_session_name(remaining)?;
+        eprintln!("[via] session: {}", session_name);
+        cmd_run(&session_name, remaining)?;
+        return Ok(0);
+    }
+
     // First arg is the session name
     let session_name = first_arg.clone();
 
@@ -111,7 +120,8 @@ fn show_usage_global() {
   via [--simple]                                          # list sessions (tabular format by default)
   via help                                                # this help
   via <session> help                                      # help for a specific session name
-  via <session> run -- <cmd> ...                          # start a new session running <cmd> (blocks)
+  via run -- <cmd> ...                                     # start session with auto-generated name
+  via <session> run -- <cmd> ...                          # start a named session running <cmd> (blocks)
   via <session> wait 'PROMPT>' [--timeout N]              # wait silently for prompt to appear
   via <session> 'PROMPT>' [--timeout N] [line]            # write input and stream output until prompt
 
@@ -140,6 +150,30 @@ low-level usage:
   via {session} tail --delim 'PROMPT>'                    # last stanza since PROMPT>
   via {session} tail --until 'PROMPT>' [--timeout N]      # stream output until PROMPT> appears
   via {session} path                                      # show session path"#);
+}
+
+/// Generate a session name like "cabal-00", "cabal-01" based on the command.
+fn generate_session_name(args: &[String]) -> Result<String> {
+    let cmd_name = args.iter()
+        .position(|a| a == "--")
+        .and_then(|pos| args.get(pos + 1))
+        .map(|cmd| {
+            std::path::Path::new(cmd)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("session")
+                .to_string()
+        })
+        .unwrap_or_else(|| "session".to_string());
+
+    let base = session::base_dir()?;
+    for index in 0u32..100 {
+        let name = format!("{}-{:02}", cmd_name, index);
+        if !base.join(&name).exists() {
+            return Ok(name);
+        }
+    }
+    anyhow::bail!("too many sessions for '{}'", cmd_name)
 }
 
 fn cmd_run(session: &str, args: &[String]) -> Result<()> {
