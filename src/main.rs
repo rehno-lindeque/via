@@ -108,34 +108,38 @@ fn run() -> Result<i32> {
 
 fn show_usage_global() {
     println!(r#"usage:
-  via [--simple]                                # list sessions (tabular format by default)
-  via help                                      # this help
-  via <session> help                            # help for a specific session name
-  via <session> run -- <cmd> ...                # start a new session running <cmd> (blocks)
-  via <session> wait 'PROMPT>' [--timeout N]    # wait for prompt to appear in output
-  via <session> 'PROMPT>' [--timeout N] [line]  # write input and read output in one command
+  via [--simple]                                          # list sessions (tabular format by default)
+  via help                                                # this help
+  via <session> help                                      # help for a specific session name
+  via <session> run -- <cmd> ...                          # start a new session running <cmd> (blocks)
+  via <session> wait 'PROMPT>' [--timeout N]              # wait silently for prompt to appear
+  via <session> 'PROMPT>' [--timeout N] [line]            # write input and stream output until prompt
 
 low-level usage:
-  via <session> write [line...]         # write (reads stdin if none)
-  via <session> tail -n N               # tail last N lines
-  via <session> tail -f [-n N]          # follow output in real-time
-  via <session> tail --since 'PROMPT>'  # tail since last PROMPT>
-  via <session> tail --delim 'PROMPT>'  # last stanza since PROMPT>
-  via <session> path                    # show session path"#);
+  via <session> write [line...]                           # write (reads stdin if none)
+  via <session> tail -n N                                 # tail last N lines
+  via <session> tail -f [-n N]                            # follow output in real-time
+  via <session> tail --since 'PROMPT>'                    # tail since last PROMPT>
+  via <session> tail --delim 'PROMPT>'                    # last stanza since PROMPT>
+  via <session> tail --until 'PROMPT>' [--timeout N]      # stream output until PROMPT> appears
+  via <session> tail --since 'P>' --until 'P>' [--timeout N]  # stream from last P> until next
+  via <session> path                                      # show session path"#);
 }
 
 fn show_session_usage(session: &str) {
     println!(r#"usage for '{session}':
-  via {session} help                    # help for a specific session session
-  via {session} 'PROMPT>' [line...]     # write input and read output in one command
+  via {session} help                                      # help for a specific session
+  via {session} wait 'PROMPT>' [--timeout N]              # wait silently for prompt to appear
+  via {session} 'PROMPT>' [--timeout N] [line]            # write input and stream output until prompt
 
 low-level usage:
-  via {session} write [line...]         # write (reads stdin if none)
-  via {session} tail -n N               # tail last N lines
-  via {session} tail -f [-n N]          # follow output in real-time
-  via {session} tail --since 'PROMPT>'  # tail since last PROMPT>
-  via {session} tail --delim 'PROMPT>'  # last stanza since PROMPT>
-  via {session} path                    # show session path"#);
+  via {session} write [line...]                           # write (reads stdin if none)
+  via {session} tail -n N                                 # tail last N lines
+  via {session} tail -f [-n N]                            # follow output in real-time
+  via {session} tail --since 'PROMPT>'                    # tail since last PROMPT>
+  via {session} tail --delim 'PROMPT>'                    # last stanza since PROMPT>
+  via {session} tail --until 'PROMPT>' [--timeout N]      # stream output until PROMPT> appears
+  via {session} path                                      # show session path"#);
 }
 
 fn cmd_run(session: &str, args: &[String]) -> Result<()> {
@@ -211,6 +215,7 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
 }
 
 /// Wait for a prompt to appear in an already-running session's output.
+/// Thin wrapper around tail --until with suppressed output.
 fn cmd_wait(session: &str, args: &[String]) -> Result<()> {
     if args.is_empty() {
         anyhow::bail!("usage: via {} wait 'PROMPT>' [--timeout N]", session);
@@ -220,7 +225,7 @@ fn cmd_wait(session: &str, args: &[String]) -> Result<()> {
     let remaining = &args[1..];
 
     // Parse optional --timeout
-    let mut timeout = DEFAULT_TIMEOUT;
+    let mut timeout = tail::DEFAULT_TIMEOUT;
     let mut i = 0;
     while i < remaining.len() {
         match remaining[i].as_str() {
@@ -238,7 +243,7 @@ fn cmd_wait(session: &str, args: &[String]) -> Result<()> {
         }
     }
 
-    prompt::wait_for_prompt(session, prompt, None, timeout)?;
+    tail::follow_until(session, prompt, timeout, 0, &mut std::io::sink())?;
     eprintln!("[via] ready (prompt detected)");
     Ok(())
 }
@@ -257,11 +262,8 @@ fn cmd_path(session: &str) -> Result<()> {
     Ok(())
 }
 
-/// Default timeout for prompt detection (seconds)
-const DEFAULT_TIMEOUT: f64 = 30.0;
-
 fn cmd_prompt_shorthand(session: &str, prompt: &str, args: &[String]) -> Result<()> {
-    // Parse optional --timeout flag from the end of args
+    // Parse optional --timeout flag from the args
     let (input_args, timeout) = parse_timeout_flag(args);
 
     // 1. Check that the prompt is at the end of the output
@@ -278,18 +280,15 @@ fn cmd_prompt_shorthand(session: &str, prompt: &str, args: &[String]) -> Result<
     // 3. Write input (from args or stdin)
     fifo::write_session(session, &input_args)?;
 
-    // 4. Wait for the command to execute and new prompt to appear
-    prompt::wait_for_prompt(session, prompt, Some(pos), timeout)?;
-
-    // 5. Tail output since the delimiter
-    tail::tail_delim(session, prompt)
+    // 4. Stream output until the next prompt appears
+    tail::follow_until(session, prompt, timeout, pos, &mut std::io::stdout())
 }
 
-/// Extract --timeout N from the end of an argument list.
+/// Extract --timeout N from an argument list.
 /// Returns the remaining args and the timeout value.
 fn parse_timeout_flag(args: &[String]) -> (Vec<String>, f64) {
     let mut remaining = args.to_vec();
-    let mut timeout = DEFAULT_TIMEOUT;
+    let mut timeout = tail::DEFAULT_TIMEOUT;
 
     // Look for --timeout anywhere in the args
     if let Some(idx) = remaining.iter().position(|a| a == "--timeout") {

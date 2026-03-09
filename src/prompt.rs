@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::thread;
-use std::time::Duration;
 
 use crate::session;
 
@@ -62,62 +60,6 @@ pub fn check_prompt_ready(session: &str, prompt: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Wait for a prompt to appear in session output.
-///
-/// If `after_pos` is Some, waits for new output beyond that position.
-/// If None, checks the current output immediately (useful for --wait on startup).
-/// `timeout_secs` controls how long to poll (default: 10s).
-pub fn wait_for_prompt(session: &str, prompt: &str, after_pos: Option<u64>, timeout_secs: f64) -> Result<()> {
-    let stdout_path = session::stdout_path(session)?;
-
-    let initial_size = match after_pos {
-        Some(pos) => pos,
-        None => {
-            // No baseline — check from position 0 so any prompt in
-            // current output is found immediately
-            0
-        }
-    };
-
-    let poll_interval = Duration::from_millis(100);
-    let max_attempts = ((timeout_secs / 0.1) as u64).max(1);
-
-    for _ in 0..max_attempts {
-        thread::sleep(poll_interval);
-
-        // The stdout file may not exist yet if teetty is still starting up
-        if !stdout_path.exists() {
-            continue;
-        }
-
-        let mut file = match File::open(&stdout_path) {
-            Ok(f) => f,
-            Err(_) => continue,
-        };
-        let current_size = file.seek(SeekFrom::End(0))?;
-
-        // Check if file has content beyond baseline
-        if current_size > initial_size {
-            // Read the last 200 bytes
-            let read_size = std::cmp::min(200, current_size);
-            let start_pos = current_size - read_size;
-
-            file.seek(SeekFrom::Start(start_pos))?;
-            let mut buffer = vec![0u8; read_size as usize];
-            file.read_exact(&mut buffer)
-                .with_context(|| "failed to read from stdout")?;
-
-            // Process and check if it ends with prompt
-            let content = process_terminal_output(&buffer)?;
-            if content.ends_with(prompt) {
-                return Ok(());
-            }
-        }
-    }
-
-    anyhow::bail!("timeout waiting for prompt '{}' (after {}s)", prompt, timeout_secs)
 }
 
 /// Strip all ANSI escape sequences from raw bytes using the vte parser.

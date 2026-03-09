@@ -1,10 +1,15 @@
 use anyhow::{Context, Result};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::prompt;
 use crate::session;
+
+/// Default timeout for --until polling (seconds)
+pub const DEFAULT_TIMEOUT: f64 = 30.0;
 
 #[derive(Debug)]
 enum TailMode {
@@ -17,6 +22,8 @@ struct TailOptions {
     mode: TailMode,
     lines: Option<usize>,
     follow: bool,
+    until: Option<String>,
+    timeout_secs: Option<f64>,
 }
 
 /// Parse tail arguments
@@ -24,6 +31,8 @@ fn parse_tail_args(session: &str, args: &[String]) -> Result<TailOptions> {
     let mut mode = TailMode::Plain;
     let mut lines: Option<usize> = None;
     let mut follow = false;
+    let mut until: Option<String> = None;
+    let mut timeout_secs: Option<f64> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -60,6 +69,21 @@ fn parse_tail_args(session: &str, args: &[String]) -> Result<TailOptions> {
                 mode = TailMode::Delim(args[i + 1].clone());
                 i += 2;
             }
+            "--until" => {
+                if i + 1 >= args.len() {
+                    anyhow::bail!("usage: via {} tail --until PROMPT [--timeout N]", session);
+                }
+                until = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--timeout" => {
+                if i + 1 >= args.len() {
+                    anyhow::bail!("--timeout requires a number");
+                }
+                timeout_secs = Some(args[i + 1].parse()
+                    .with_context(|| format!("invalid timeout: {}", args[i + 1]))?);
+                i += 2;
+            }
             _ => break,
         }
     }
@@ -69,17 +93,44 @@ fn parse_tail_args(session: &str, args: &[String]) -> Result<TailOptions> {
         anyhow::bail!("-f cannot be combined with --since or --delim");
     }
 
-    if matches!(mode, TailMode::Plain) && lines.is_none() && !follow {
-        anyhow::bail!("usage: via <session> tail [-n N] (--since PROMPT | --delim PROMPT | -f)");
+    if follow && until.is_some() {
+        anyhow::bail!("-f cannot be combined with --until");
     }
 
-    Ok(TailOptions { mode, lines, follow })
+    if timeout_secs.is_some() && until.is_none() {
+        anyhow::bail!("--timeout requires --until");
+    }
+
+    if until.is_some() && matches!(mode, TailMode::Delim(_)) {
+        anyhow::bail!("--until cannot be combined with --delim");
+    }
+
+    if matches!(mode, TailMode::Plain) && lines.is_none() && !follow && until.is_none() {
+        anyhow::bail!("usage: via <session> tail [-n N] (--since PROMPT | --delim PROMPT | --until PROMPT | -f)");
+    }
+
+    Ok(TailOptions { mode, lines, follow, until, timeout_secs })
 }
 
 /// Tail a session's output
 pub fn tail_session(session: &str, args: &[String]) -> Result<()> {
     let opts = parse_tail_args(session, args)?;
     let stdout_path = session::stdout_path(session)?;
+
+    // --until mode: stream output until pattern matches
+    if let Some(ref pattern) = opts.until {
+        let timeout = opts.timeout_secs.unwrap_or(DEFAULT_TIMEOUT);
+
+        // If combined with --since, find the starting position from last prompt occurrence
+        let start_pos = if let TailMode::Since(ref since_prompt) = opts.mode {
+            find_since_position(session, since_prompt, opts.lines.unwrap_or(100))?
+        } else {
+            // Start from beginning so existing content is checked too
+            0
+        };
+
+        return follow_until(session, pattern, timeout, start_pos, &mut std::io::stdout());
+    }
 
     if !stdout_path.exists() {
         anyhow::bail!("no stdout at {}", stdout_path.display());
@@ -115,7 +166,7 @@ pub fn tail_session(session: &str, args: &[String]) -> Result<()> {
                 .output()
                 .with_context(|| "failed to execute tail")?;
 
-            std::io::Write::write_all(&mut std::io::stdout(), &output.stdout)?;
+            Write::write_all(&mut std::io::stdout(), &output.stdout)?;
         }
         TailMode::Since(prompt) => {
             tail_since(session, &prompt, opts.lines.unwrap_or(100))?;
@@ -126,6 +177,100 @@ pub fn tail_session(session: &str, args: &[String]) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Stream output from `start_pos` until `pattern` appears in a line, writing to `writer`.
+/// Waits for the stdout file to exist if it doesn't yet.
+pub fn follow_until(
+    session: &str,
+    pattern: &str,
+    timeout_secs: f64,
+    start_pos: u64,
+    writer: &mut dyn Write,
+) -> Result<()> {
+    let stdout_path = session::stdout_path(session)?;
+    let poll_interval = Duration::from_millis(100);
+    let deadline = Instant::now() + Duration::from_secs_f64(timeout_secs);
+    let mut pos = start_pos;
+
+    loop {
+        if Instant::now() > deadline {
+            anyhow::bail!("timeout waiting for '{}' (after {}s)", pattern, timeout_secs);
+        }
+
+        // Wait for file to exist
+        if !stdout_path.exists() {
+            thread::sleep(poll_interval);
+            continue;
+        }
+
+        let mut file = match File::open(&stdout_path) {
+            Ok(f) => f,
+            Err(_) => {
+                thread::sleep(poll_interval);
+                continue;
+            }
+        };
+
+        use std::io::{Seek, SeekFrom};
+        let file_size = file.seek(SeekFrom::End(0))?;
+
+        if file_size <= pos {
+            thread::sleep(poll_interval);
+            continue;
+        }
+
+        // Read new content
+        file.seek(SeekFrom::Start(pos))?;
+        let reader = BufReader::new(&file);
+        for line_result in reader.lines() {
+            let line = line_result.with_context(|| "failed to read line from stdout")?;
+            writeln!(writer, "{}", line)?;
+
+            // Check if this line contains the pattern (strip ANSI for matching)
+            if prompt::strip_ansi(line.as_bytes()).contains(pattern) {
+                return Ok(());
+            }
+        }
+
+        // Update position to current end
+        pos = file_size;
+        thread::sleep(poll_interval);
+    }
+}
+
+/// Find the byte position of the last occurrence of a prompt in the stdout file.
+/// Used by `--since` combined with `--until` to determine where to start streaming.
+fn find_since_position(session: &str, prompt: &str, window: usize) -> Result<u64> {
+    let stdout_path = session::stdout_path(session)?;
+
+    if !stdout_path.exists() {
+        return Ok(0);
+    }
+
+    let file = File::open(&stdout_path)
+        .with_context(|| format!("failed to open {}", stdout_path.display()))?;
+
+    let lines = read_last_n_lines(&file, window)?;
+
+    // Find byte offset: we need to figure out where in the file the matching line starts.
+    // Read backwards from the end to find the prompt line's byte position.
+    use std::io::{Seek, SeekFrom};
+    let mut file = file.try_clone()?;
+    let file_size = file.seek(SeekFrom::End(0))?;
+
+    // Find the last occurrence of prompt in lines
+    if let Some(idx) = lines.iter().rposition(|line| prompt::strip_ansi(line.as_bytes()).contains(prompt)) {
+        // Estimate: sum bytes of lines after the match to get offset from end
+        let bytes_after: usize = lines[idx..].iter()
+            .map(|l| l.len() + 1) // +1 for newline
+            .sum();
+        let start = if bytes_after as u64 >= file_size { 0 } else { file_size - bytes_after as u64 };
+        Ok(start)
+    } else {
+        // No prompt found, start from current end
+        Ok(file_size)
+    }
 }
 
 /// Tail since the last occurrence of a prompt (includes prompt)
@@ -183,11 +328,6 @@ fn tail_delim_internal(session: &str, prompt: &str, window: usize) -> Result<()>
     }
 
     Ok(())
-}
-
-/// Public interface for tail_delim used by prompt shorthand
-pub fn tail_delim(session: &str, prompt: &str) -> Result<()> {
-    tail_delim_internal(session, prompt, 100)
 }
 
 /// Read the last N lines from a file efficiently
