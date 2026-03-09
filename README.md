@@ -15,35 +15,33 @@ Also, I'm not a Rust developer and leaned heavily on Claude to port my original 
 
 ## Example
 
-Start a Nix REPL session in the background:
+Start a Nix REPL session in one terminal:
 ```bash
-$ via run --delim 'nix-repl>' --bg -- nix repl
-[via] session: nix-00
+$ via nix run --delim 'nix-repl>' -- nix repl
 ...
 ```
 
 Start a python session in another terminal:
 ```bash
-$ via run --delim '>>>' --bg -- python
-[via] session: python-00
+$ via python run --delim '>>>' -- python
 ...
 ```
 
-Interact with both from any terminal:
+Interact with both from a third terminal:
 ```bash
 # Check what sessions are running
 $ via
-Session    Prompt Line  Working Directory  Command
-nix-00     nix-repl>    /home/me/projects  nix repl
-python-00  >>>          /home/me/projects  python
+Session  Prompt Line  Working Directory  Command
+nix      nix-repl>    /home/me/projects  nix repl
+python   >>>          /home/me/projects  python
 
 # Send a command and get the result (delimiter is stored)
-$ via nix-00 '1 + 1'
+$ via nix '1 + 1'
 nix-repl> 1 + 1
 2
 
 # Pipe commands into the repl
-$ echo 'print("hello")' | via python-00
+$ echo 'print("hello")' | via python
 >>> print("hello")
 hello
 ```
