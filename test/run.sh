@@ -8,7 +8,7 @@ set -euo pipefail
 VIA="${1:-via}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 MOCK="$DIR/mock-repl.sh"
-export REPLS_DIR="$(mktemp -d)"
+export REPLS_DIR="${REPLS_DIR:-$(mktemp -d)}"
 PASS=0
 FAIL=0
 ERRORS=()
@@ -71,16 +71,7 @@ assert_fails() {
 # Start a session in the background, wait for prompt
 start_session() {
   local name="$1" delim="$2"
-  # TODO: replace with `via run --background` once it exists
-  "$VIA" "$name" run --delim "$delim" -- bash "$MOCK" "$delim" >/dev/null 2>&1 &
-  VIA_PID=$!
-  # Race: backgrounded run may not have written metadata yet.
-  # Poll for the delim file as a workaround until --background lands.
-  local session_dir="$REPLS_DIR/$name"
-  for _ in $(seq 1 50); do
-    [ -f "$session_dir/delim" ] && break
-    sleep 0.1
-  done
+  "$VIA" "$name" run --delim "$delim" --bg -- bash "$MOCK" "$delim"
   "$VIA" "$name" wait --timeout 10 2>/dev/null
 }
 
@@ -88,8 +79,6 @@ stop_session() {
   local name="$1"
   echo ':quit' | "$VIA" "$name" write 2>/dev/null || true
   sleep 0.5
-  kill "$VIA_PID" 2>/dev/null || true
-  wait "$VIA_PID" 2>/dev/null || true
 }
 
 # ── tests ────────────────────────────────────────────────────────────
@@ -151,14 +140,10 @@ assert_contains "session help" "--delim" "$VIA" test-01 help
 # ── auto-generated session name ──────────────────────────────────────
 echo "# auto-generated name"
 
-"$VIA" run --delim 'mock>' -- bash "$MOCK" 'mock>' >/dev/null 2>&1 &
-AUTO_PID=$!
-sleep 2
+"$VIA" run --delim 'mock>' --bg -- bash "$MOCK" 'mock>'
 assert_contains "auto name listed" "bash-00" "$VIA" --simple
 echo ':quit' | "$VIA" bash-00 write 2>/dev/null || true
 sleep 0.5
-kill "$AUTO_PID" 2>/dev/null || true
-wait "$AUTO_PID" 2>/dev/null || true
 
 # ── cleanup ──────────────────────────────────────────────────────────
 

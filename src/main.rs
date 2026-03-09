@@ -119,8 +119,8 @@ fn show_usage_global() {
   via [--simple]                                          # list sessions (tabular format by default)
   via help                                                # this help
   via <session> help                                      # help for a specific session name
-  via run [--delim DELIM] -- <cmd> ...                    # start session with auto-generated name
-  via <session> run [--delim DELIM] -- <cmd> ...          # start a named session running <cmd>
+  via run [--delim D] [--bg] -- <cmd> ...                  # start session with auto-generated name
+  via <session> run [--delim D] [--bg] -- <cmd> ...       # start a named session running <cmd>
   via <session> wait [--until PROMPT] [--timeout N]       # wait for prompt (default: stored delim)
   via <session> [--delim D] [--timeout N] line            # write input and stream until delim
 
@@ -189,19 +189,25 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
     let pre_args = &args[..separator_pos];
     let cmd_args = &args[separator_pos + 1..];
 
-    // Parse --delim from pre-separator args
+    // Parse flags from pre-separator args
     let mut delim: Option<String> = None;
+    let mut background = false;
     {
         let mut i = 0;
         while i < pre_args.len() {
-            if pre_args[i] == "--delim" {
-                if i + 1 >= pre_args.len() {
-                    anyhow::bail!("--delim requires a value");
+            match pre_args[i].as_str() {
+                "--delim" => {
+                    if i + 1 >= pre_args.len() {
+                        anyhow::bail!("--delim requires a value");
+                    }
+                    delim = Some(pre_args[i + 1].clone());
+                    i += 2;
                 }
-                delim = Some(pre_args[i + 1].clone());
-                i += 2;
-            } else {
-                anyhow::bail!("unknown flag before '--': {}", pre_args[i]);
+                "--background" | "--bg" => {
+                    background = true;
+                    i += 1;
+                }
+                _ => anyhow::bail!("unknown flag before '--': {}", pre_args[i]),
             }
         }
     }
@@ -247,26 +253,47 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
         cmd.arg(arg);
     }
 
-    // Set up cleanup handler for Ctrl-C
-    let dir_for_cleanup = dir.clone();
-    ctrlc::set_handler(move || {
-        let _ = std::fs::remove_dir_all(&dir_for_cleanup);
-        std::process::exit(130);
-    }).ok();
+    if background {
+        // Spawn teetty and wait for it to create stdin/stdout, then return.
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        let _child = cmd.spawn()
+            .with_context(|| "failed to execute teetty (is it installed?)")?;
 
-    // Run teetty in the foreground — blocks until the subprocess exits.
-    // This keeps teetty as a child of `via`, so killing `via` also
-    // terminates teetty.
-    let status = cmd.status()
-        .with_context(|| "failed to execute teetty (is it installed?)")?;
+        // Poll until teetty has created the stdin FIFO and stdout file
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if stdin_path.exists() && stdout_path.exists() {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                anyhow::bail!("teetty did not create stdin/stdout within 5s");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
 
-    // Cleanup directory after teetty exits
-    std::fs::remove_dir_all(&dir).ok();
-
-    if let Some(code) = status.code() {
-        std::process::exit(code);
+        // teetty is running detached; session dir stays until process exits
+        Ok(())
     } else {
-        std::process::exit(1);
+        // Set up cleanup handler for Ctrl-C
+        let dir_for_cleanup = dir.clone();
+        ctrlc::set_handler(move || {
+            let _ = std::fs::remove_dir_all(&dir_for_cleanup);
+            std::process::exit(130);
+        }).ok();
+
+        // Run teetty in the foreground — blocks until the subprocess exits.
+        let status = cmd.status()
+            .with_context(|| "failed to execute teetty (is it installed?)")?;
+
+        // Cleanup directory after teetty exits
+        std::fs::remove_dir_all(&dir).ok();
+
+        if let Some(code) = status.code() {
+            std::process::exit(code);
+        } else {
+            std::process::exit(1);
+        }
     }
 }
 
