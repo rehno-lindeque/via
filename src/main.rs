@@ -106,8 +106,12 @@ fn run() -> Result<i32> {
             Ok(0)
         }
         _ => {
-            // Shorthand: via <session> [--delim D] [--timeout N] line...
-            // Treat remaining args as input if session has a stored delim or --delim is provided
+            // Only try shorthand if the session actually exists.
+            // Otherwise it's likely a typo in the subcommand.
+            let dir = session::session_path(&session_name)?;
+            if !dir.exists() {
+                anyhow::bail!("unknown session '{}' (try: via help)", session_name);
+            }
             cmd_shorthand(&session_name, &args[1..])?;
             Ok(0)
         }
