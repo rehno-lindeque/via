@@ -16,10 +16,12 @@
           pkgs = import nixpkgs {
             inherit system;
           };
+          # Tests require a real PTY which doesn't work in the Nix sandbox
+          teetty = pkgs.teetty.overrideAttrs { doCheck = false; };
         in
         {
           default = pkgs.callPackage ./default.nix {
-            inherit (pkgs) teetty;
+            inherit teetty;
           };
           via = self.packages.${system}.default;
         }
@@ -30,6 +32,7 @@
           pkgs = import nixpkgs {
             inherit system;
           };
+          teetty = pkgs.teetty.overrideAttrs { doCheck = false; };
         in
         {
           default = pkgs.mkShell {
