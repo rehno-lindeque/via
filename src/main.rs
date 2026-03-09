@@ -259,10 +259,28 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());
-        let _child = cmd.spawn()
-            .with_context(|| "failed to execute teetty (is it installed?)")?;
 
-        // Poll until teetty has created the stdin FIFO and stdout file
+        // Fork before spawning teetty so the child process is teetty's
+        // actual parent and can wait on it for cleanup.
+        unsafe {
+            match libc::fork() {
+                -1 => anyhow::bail!("fork failed"),
+                0 => {
+                    // Child: detach from terminal, spawn teetty, wait, clean up
+                    libc::setsid();
+                    let mut child = match cmd.spawn() {
+                        Ok(c) => c,
+                        Err(_) => std::process::exit(1),
+                    };
+                    let _ = child.wait();
+                    let _ = std::fs::remove_dir_all(&dir);
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
+        }
+
+        // Parent: poll until teetty has created the stdin FIFO and stdout file
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             if stdin_path.exists() && stdout_path.exists() {
@@ -274,7 +292,6 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        // teetty is running detached; session dir stays until process exits
         Ok(())
     } else {
         // Set up cleanup handler for Ctrl-C

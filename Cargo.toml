@@ -1,6 +1,6 @@
 [package]
 name = "via"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Rehno Lindeque"]
@@ -9,6 +9,7 @@ description = "Issue commands across multiple interactive CLI sessions"
 [dependencies]
 anyhow = "1.0"
 ctrlc = "3.4"
+libc = "0.2"
 strip-ansi-escapes = "0.2"
 
 [[bin]]

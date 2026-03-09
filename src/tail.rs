@@ -328,17 +328,6 @@ fn tail_delim_internal(session: &str, prompt: &str, window: usize) -> Result<()>
     Ok(())
 }
 
-/// Read the last N lines from a file efficiently.
-/// Starts with a byte estimate and doubles until we have enough lines
-/// or have read the entire file.
-fn read_last_n_lines(file: &File, n: usize) -> Result<Vec<String>> {
-    let mut lines = read_back_until(file, n, |_| true)?;
-    if lines.len() > n {
-        lines = lines.split_off(lines.len() - n);
-    }
-    Ok(lines)
-}
-
 /// Read backwards from the end of a file, doubling the byte window until
 /// `predicate` is satisfied or the entire file has been read.
 /// Returns at least `min_lines` lines (if available).

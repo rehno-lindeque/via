@@ -169,6 +169,23 @@ fi
 
 stop_session test-01
 
+# ── --bg cleanup ─────────────────────────────────────────────────────
+echo "# --bg cleanup"
+
+start_session test-bg 'mock>'
+if [ -d "$REPLS_DIR/test-bg" ]; then
+  pass "--bg session dir exists while running"
+else
+  fail "--bg session dir exists while running" "dir missing"
+fi
+echo ':quit' | "$VIA" test-bg write 2>/dev/null || true
+sleep 1
+if [ ! -d "$REPLS_DIR/test-bg" ]; then
+  pass "--bg session cleaned up after exit"
+else
+  fail "--bg session cleaned up after exit" "dir still exists"
+fi
+
 # ── error cases (no session running) ─────────────────────────────────
 echo "# error cases"
 
