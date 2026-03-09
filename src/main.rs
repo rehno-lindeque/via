@@ -59,7 +59,7 @@ fn run() -> Result<i32> {
         return Ok(0);
     }
 
-    // via run -- <cmd> ... → auto-generate session name
+    // via run [--delim D] -- <cmd> ... → auto-generate session name
     if first_arg == "run" {
         let remaining = &args[1..];
         let session_name = generate_session_name(remaining)?;
@@ -72,7 +72,9 @@ fn run() -> Result<i32> {
     let session_name = first_arg.clone();
 
     if args.len() < 2 {
-        anyhow::bail!("missing subcommand for '{}' (try: via {} help)", session_name, session_name);
+        // via <session> with no args — use shorthand with piped stdin
+        cmd_shorthand(&session_name, &[])?;
+        return Ok(0);
     }
 
     let subcmd = &args[1];
@@ -103,14 +105,11 @@ fn run() -> Result<i32> {
             cmd_path(&session_name)?;
             Ok(0)
         }
-        s if s.ends_with('>') => {
-            // Shorthand: via <session> 'PROMPT>' [line...]
-            cmd_prompt_shorthand(&session_name, subcmd, remaining_args)?;
-            Ok(0)
-        }
         _ => {
-            anyhow::bail!("unknown subcommand for '{}': {} (try: via {} help)",
-                         session_name, subcmd, session_name);
+            // Shorthand: via <session> [--delim D] [--timeout N] line...
+            // Treat remaining args as input if session has a stored delim or --delim is provided
+            cmd_shorthand(&session_name, &args[1..])?;
+            Ok(0)
         }
     }
 }
@@ -120,35 +119,35 @@ fn show_usage_global() {
   via [--simple]                                          # list sessions (tabular format by default)
   via help                                                # this help
   via <session> help                                      # help for a specific session name
-  via run -- <cmd> ...                                     # start session with auto-generated name
-  via <session> run -- <cmd> ...                          # start a named session running <cmd> (blocks)
-  via <session> wait 'PROMPT>' [--timeout N]              # wait silently for prompt to appear
-  via <session> 'PROMPT>' [--timeout N] [line]            # write input and stream output until prompt
+  via run [--delim DELIM] -- <cmd> ...                    # start session with auto-generated name
+  via <session> run [--delim DELIM] -- <cmd> ...          # start a named session running <cmd>
+  via <session> wait [--until PROMPT] [--timeout N]       # wait for prompt (default: stored delim)
+  via <session> [--delim D] [--timeout N] line            # write input and stream until delim
 
 low-level usage:
   via <session> write [line...]                           # write (reads stdin if none)
   via <session> tail -n N                                 # tail last N lines
   via <session> tail -f [-n N]                            # follow output in real-time
-  via <session> tail --since 'PROMPT>'                    # tail since last PROMPT>
-  via <session> tail --delim 'PROMPT>'                    # last stanza since PROMPT>
-  via <session> tail --until 'PROMPT>' [--timeout N]      # stream output until PROMPT> appears
-  via <session> tail --since 'P>' --until 'P>' [--timeout N]  # stream from last P> until next
+  via <session> tail --since [PROMPT]                     # tail since last prompt (bare = stored delim)
+  via <session> tail --delim [PROMPT]                     # last stanza (bare = stored delim)
+  via <session> tail --until [PROMPT] [--timeout N]       # stream until prompt (bare = stored delim)
+  via <session> tail --since --until [--timeout N]        # stream from last prompt until next
   via <session> path                                      # show session path"#);
 }
 
 fn show_session_usage(session: &str) {
     println!(r#"usage for '{session}':
   via {session} help                                      # help for a specific session
-  via {session} wait 'PROMPT>' [--timeout N]              # wait silently for prompt to appear
-  via {session} 'PROMPT>' [--timeout N] [line]            # write input and stream output until prompt
+  via {session} wait [--until PROMPT] [--timeout N]       # wait for prompt (default: stored delim)
+  via {session} [--delim D] [--timeout N] line            # write input and stream until delim
 
 low-level usage:
   via {session} write [line...]                           # write (reads stdin if none)
   via {session} tail -n N                                 # tail last N lines
   via {session} tail -f [-n N]                            # follow output in real-time
-  via {session} tail --since 'PROMPT>'                    # tail since last PROMPT>
-  via {session} tail --delim 'PROMPT>'                    # last stanza since PROMPT>
-  via {session} tail --until 'PROMPT>' [--timeout N]      # stream output until PROMPT> appears
+  via {session} tail --since [PROMPT]                     # tail since last prompt (bare = stored delim)
+  via {session} tail --delim [PROMPT]                     # last stanza (bare = stored delim)
+  via {session} tail --until [PROMPT] [--timeout N]       # stream until prompt (bare = stored delim)
   via {session} path                                      # show session path"#);
 }
 
@@ -177,17 +176,35 @@ fn generate_session_name(args: &[String]) -> Result<String> {
 }
 
 fn cmd_run(session: &str, args: &[String]) -> Result<()> {
-    // Expect "--" separator and at least one command arg
+    // Parse flags before the "--" separator
     let separator_pos = args.iter().position(|a| a == "--");
     match separator_pos {
-        None => anyhow::bail!("usage: via {} run -- <command> [args...]", session),
+        None => anyhow::bail!("usage: via {} run [--delim DELIM] -- <command> [args...]", session),
         Some(pos) if pos + 1 >= args.len() => {
-            anyhow::bail!("usage: via {} run -- <command> [args...]", session)
+            anyhow::bail!("usage: via {} run [--delim DELIM] -- <command> [args...]", session)
         }
         _ => {}
     }
     let separator_pos = separator_pos.unwrap();
+    let pre_args = &args[..separator_pos];
     let cmd_args = &args[separator_pos + 1..];
+
+    // Parse --delim from pre-separator args
+    let mut delim: Option<String> = None;
+    {
+        let mut i = 0;
+        while i < pre_args.len() {
+            if pre_args[i] == "--delim" {
+                if i + 1 >= pre_args.len() {
+                    anyhow::bail!("--delim requires a value");
+                }
+                delim = Some(pre_args[i + 1].clone());
+                i += 2;
+            } else {
+                anyhow::bail!("unknown flag before '--': {}", pre_args[i]);
+            }
+        }
+    }
 
     // Get session directory and create it
     let dir = session::session_path(session)?;
@@ -198,6 +215,11 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
     let command = cmd_args.join(" ");
     std::fs::write(dir.join("command"), &command)
         .with_context(|| "failed to write command metadata")?;
+
+    if let Some(ref d) = delim {
+        std::fs::write(dir.join("delim"), d)
+            .with_context(|| "failed to write delim metadata")?;
+    }
 
     if let Ok(cwd) = env::current_dir() {
         std::fs::write(dir.join("cwd"), cwd.to_string_lossy().as_bytes())
@@ -250,34 +272,48 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
 
 /// Wait for a prompt to appear in an already-running session's output.
 /// Thin wrapper around tail --until with suppressed output.
+/// `via <session> wait [--until PROMPT] [--timeout N]`
+/// If --until is bare or omitted, uses stored session delim.
 fn cmd_wait(session: &str, args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        anyhow::bail!("usage: via {} wait 'PROMPT>' [--timeout N]", session);
-    }
-
-    let prompt = &args[0];
-    let remaining = &args[1..];
-
-    // Parse optional --timeout
+    let mut prompt: Option<String> = None;
     let mut timeout = tail::DEFAULT_TIMEOUT;
     let mut i = 0;
-    while i < remaining.len() {
-        match remaining[i].as_str() {
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--until" => {
+                let (val, consumed) = session::resolve_delim(session, args, i)?;
+                prompt = Some(val);
+                i += consumed;
+            }
             "--timeout" => {
-                if i + 1 >= remaining.len() {
+                if i + 1 >= args.len() {
                     anyhow::bail!("--timeout requires a number");
                 }
-                timeout = remaining[i + 1].parse()
-                    .with_context(|| format!("invalid timeout: {}", remaining[i + 1]))?;
+                timeout = args[i + 1].parse()
+                    .with_context(|| format!("invalid timeout: {}", args[i + 1]))?;
                 i += 2;
             }
-            _ => {
-                anyhow::bail!("usage: via {} wait 'PROMPT>' [--timeout N]", session);
+            other => {
+                // Legacy positional: first non-flag arg is the prompt
+                if prompt.is_none() && !other.starts_with("--") {
+                    prompt = Some(other.to_string());
+                    i += 1;
+                } else {
+                    anyhow::bail!("unexpected argument: {}", other);
+                }
             }
         }
     }
 
-    tail::follow_until(session, prompt, timeout, 0, &mut std::io::sink())?;
+    // Fall back to stored delim if no prompt specified
+    let prompt = match prompt {
+        Some(p) => p,
+        None => session::get_delim(session)?
+            .ok_or_else(|| anyhow::anyhow!("no delimiter: use --until PROMPT or set --delim on 'via run'"))?,
+    };
+
+    tail::follow_until(session, &prompt, timeout, 0, &mut std::io::sink())?;
     eprintln!("[via] ready (prompt detected)");
     Ok(())
 }
@@ -296,12 +332,45 @@ fn cmd_path(session: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_prompt_shorthand(session: &str, prompt: &str, args: &[String]) -> Result<()> {
-    // Parse optional --timeout flag from the args
-    let (input_args, timeout) = parse_timeout_flag(args);
+/// Shorthand: via <session> [--delim D] [--timeout N] line...
+/// Uses stored delim if --delim not provided.
+fn cmd_shorthand(session: &str, args: &[String]) -> Result<()> {
+    let mut delim: Option<String> = None;
+    let mut timeout = tail::DEFAULT_TIMEOUT;
+    let mut input_args: Vec<String> = Vec::new();
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--delim" => {
+                let (val, consumed) = session::resolve_delim(session, args, i)?;
+                delim = Some(val);
+                i += consumed;
+            }
+            "--timeout" => {
+                if i + 1 >= args.len() {
+                    anyhow::bail!("--timeout requires a number");
+                }
+                timeout = args[i + 1].parse()
+                    .with_context(|| format!("invalid timeout: {}", args[i + 1]))?;
+                i += 2;
+            }
+            _ => {
+                input_args.push(args[i].clone());
+                i += 1;
+            }
+        }
+    }
+
+    // Resolve delimiter
+    let prompt = match delim {
+        Some(d) => d,
+        None => session::get_delim(session)?
+            .ok_or_else(|| anyhow::anyhow!("unknown subcommand or no stored delimiter for '{}' (try: via {} help)", session, session))?,
+    };
 
     // 1. Check that the prompt is at the end of the output
-    prompt::check_prompt_ready(session, prompt)?;
+    prompt::check_prompt_ready(session, &prompt)?;
 
     // 2. Record current file position before writing
     let stdout_path = session::stdout_path(session)?;
@@ -315,25 +384,6 @@ fn cmd_prompt_shorthand(session: &str, prompt: &str, args: &[String]) -> Result<
     fifo::write_session(session, &input_args)?;
 
     // 4. Stream output until the next prompt appears
-    tail::follow_until(session, prompt, timeout, pos, &mut std::io::stdout())
+    tail::follow_until(session, &prompt, timeout, pos, &mut std::io::stdout())
 }
 
-/// Extract --timeout N from an argument list.
-/// Returns the remaining args and the timeout value.
-fn parse_timeout_flag(args: &[String]) -> (Vec<String>, f64) {
-    let mut remaining = args.to_vec();
-    let mut timeout = tail::DEFAULT_TIMEOUT;
-
-    // Look for --timeout anywhere in the args
-    if let Some(idx) = remaining.iter().position(|a| a == "--timeout") {
-        if idx + 1 < remaining.len() {
-            if let Ok(t) = remaining[idx + 1].parse::<f64>() {
-                timeout = t;
-            }
-            remaining.remove(idx + 1);
-        }
-        remaining.remove(idx);
-    }
-
-    (remaining, timeout)
-}

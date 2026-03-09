@@ -50,31 +50,25 @@ fn parse_tail_args(session: &str, args: &[String]) -> Result<TailOptions> {
                 i += 2;
             }
             "--since" => {
-                if i + 1 >= args.len() {
-                    anyhow::bail!("usage: via {} tail --since PROMPT", session);
-                }
                 if !matches!(mode, TailMode::Plain) {
                     anyhow::bail!("only one of --since/--delim allowed");
                 }
-                mode = TailMode::Since(args[i + 1].clone());
-                i += 2;
+                let (val, consumed) = session::resolve_delim(session, args, i)?;
+                mode = TailMode::Since(val);
+                i += consumed;
             }
             "--delim" => {
-                if i + 1 >= args.len() {
-                    anyhow::bail!("usage: via {} tail --delim PROMPT", session);
-                }
                 if !matches!(mode, TailMode::Plain) {
                     anyhow::bail!("only one of --since/--delim allowed");
                 }
-                mode = TailMode::Delim(args[i + 1].clone());
-                i += 2;
+                let (val, consumed) = session::resolve_delim(session, args, i)?;
+                mode = TailMode::Delim(val);
+                i += consumed;
             }
             "--until" => {
-                if i + 1 >= args.len() {
-                    anyhow::bail!("usage: via {} tail --until PROMPT [--timeout N]", session);
-                }
-                until = Some(args[i + 1].clone());
-                i += 2;
+                let (val, consumed) = session::resolve_delim(session, args, i)?;
+                until = Some(val);
+                i += consumed;
             }
             "--timeout" => {
                 if i + 1 >= args.len() {

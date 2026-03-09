@@ -180,3 +180,37 @@ pub fn session_exists(session: &str) -> Result<bool> {
     let stdout = stdout_path(session)?;
     Ok(stdin.exists() && stdout.exists())
 }
+
+/// Get the delim file path for a session
+pub fn delim_path(session: &str) -> Result<PathBuf> {
+    Ok(session_path(session)?.join("delim"))
+}
+
+/// Read the stored delimiter for a session, if any
+pub fn get_delim(session: &str) -> Result<Option<String>> {
+    let path = delim_path(session)?;
+    match fs::read_to_string(&path) {
+        Ok(s) => Ok(Some(s.trim().to_string())),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Resolve a flag value: if the next arg exists and doesn't start with "--",
+/// use it as the explicit value. Otherwise fall back to the stored session delim.
+/// Returns (value, number_of_args_consumed).
+pub fn resolve_delim(session: &str, args: &[String], i: usize) -> Result<(String, usize)> {
+    let next = args.get(i + 1);
+    let is_bare = match next {
+        None => true,
+        Some(s) => s.starts_with("--"),
+    };
+
+    if is_bare {
+        match get_delim(session)? {
+            Some(d) => Ok((d, 1)),
+            None => anyhow::bail!("no stored delimiter for session '{}' (use --delim VALUE with 'via run')", session),
+        }
+    } else {
+        Ok((next.unwrap().clone(), 2))
+    }
+}
