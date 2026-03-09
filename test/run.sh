@@ -145,6 +145,26 @@ assert_contains "auto name listed" "bash-00" "$VIA" --simple
 echo ':quit' | "$VIA" bash-00 write 2>/dev/null || true
 sleep 0.5
 
+# ── long output ──────────────────────────────────────────────────────
+echo "# long output"
+
+"$VIA" test-01 --timeout 60 ':long 200' >/dev/null 2>&1
+delim_lines=$("$VIA" test-01 tail --delim 2>&1 | wc -l)
+# 201 = prompt line + 200 output lines
+if [[ "$delim_lines" -eq 201 ]]; then
+  pass "tail --delim 200 lines"
+else
+  fail "tail --delim 200 lines" "expected 201 lines, got $delim_lines"
+fi
+
+"$VIA" test-01 --timeout 120 ':long 500' >/dev/null 2>&1
+delim_lines=$("$VIA" test-01 tail --delim 2>&1 | wc -l)
+if [[ "$delim_lines" -eq 501 ]]; then
+  pass "tail --delim 500 lines"
+else
+  fail "tail --delim 500 lines" "expected 501 lines, got $delim_lines"
+fi
+
 # ── cleanup ──────────────────────────────────────────────────────────
 
 stop_session test-01

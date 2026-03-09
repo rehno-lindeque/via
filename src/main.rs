@@ -254,7 +254,9 @@ fn cmd_run(session: &str, args: &[String]) -> Result<()> {
     }
 
     if background {
-        // Spawn teetty and wait for it to create stdin/stdout, then return.
+        // Detach teetty from our stdio so it doesn't consume the shell's
+        // stdin or pollute stdout. teetty uses the FIFO and file instead.
+        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());
         let _child = cmd.spawn()

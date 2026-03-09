@@ -245,7 +245,9 @@ fn find_since_position(session: &str, prompt: &str, window: usize) -> Result<u64
     let file = File::open(&stdout_path)
         .with_context(|| format!("failed to open {}", stdout_path.display()))?;
 
-    let lines = read_last_n_lines(&file, window)?;
+    let lines = read_back_until(&file, window, |lines| {
+        lines.iter().any(|line| prompt::strip_ansi(line.as_bytes()).contains(prompt))
+    })?;
 
     // Find byte offset: we need to figure out where in the file the matching line starts.
     // Read backwards from the end to find the prompt line's byte position.
@@ -271,13 +273,12 @@ fn find_since_position(session: &str, prompt: &str, window: usize) -> Result<u64
 fn tail_since(session: &str, prompt: &str, window: usize) -> Result<()> {
     let stdout_path = session::stdout_path(session)?;
 
-    // Equivalent to: tail -n window | tac | grep -m 1 -B window -F prompt | tac
-    // We'll implement this in Rust for better control
-
     let file = File::open(&stdout_path)
         .with_context(|| format!("failed to open {}", stdout_path.display()))?;
 
-    let lines = read_last_n_lines(&file, window)?;
+    let lines = read_back_until(&file, window, |lines| {
+        lines.iter().any(|line| prompt::strip_ansi(line.as_bytes()).contains(prompt))
+    })?;
 
     // Find the last occurrence of prompt (strip ANSI before matching)
     if let Some(idx) = lines.iter().rposition(|line| prompt::strip_ansi(line.as_bytes()).contains(prompt)) {
@@ -297,7 +298,10 @@ fn tail_delim_internal(session: &str, prompt: &str, window: usize) -> Result<()>
     let file = File::open(&stdout_path)
         .with_context(|| format!("failed to open {}", stdout_path.display()))?;
 
-    let lines = read_last_n_lines(&file, window)?;
+    let lines = read_back_until(&file, window, |lines| {
+        // Need at least two prompt occurrences for a complete stanza
+        lines.iter().filter(|line| prompt::strip_ansi(line.as_bytes()).contains(prompt)).count() >= 2
+    })?;
 
     // Find all occurrences of prompt (strip ANSI before matching)
     let indices: Vec<usize> = lines.iter()
@@ -324,8 +328,25 @@ fn tail_delim_internal(session: &str, prompt: &str, window: usize) -> Result<()>
     Ok(())
 }
 
-/// Read the last N lines from a file efficiently
+/// Read the last N lines from a file efficiently.
+/// Starts with a byte estimate and doubles until we have enough lines
+/// or have read the entire file.
 fn read_last_n_lines(file: &File, n: usize) -> Result<Vec<String>> {
+    let mut lines = read_back_until(file, n, |_| true)?;
+    if lines.len() > n {
+        lines = lines.split_off(lines.len() - n);
+    }
+    Ok(lines)
+}
+
+/// Read backwards from the end of a file, doubling the byte window until
+/// `predicate` is satisfied or the entire file has been read.
+/// Returns at least `min_lines` lines (if available).
+fn read_back_until(
+    file: &File,
+    min_lines: usize,
+    predicate: impl Fn(&[String]) -> bool,
+) -> Result<Vec<String>> {
     use std::io::{Seek, SeekFrom};
 
     let mut file = file.try_clone()?;
@@ -335,23 +356,24 @@ fn read_last_n_lines(file: &File, n: usize) -> Result<Vec<String>> {
         return Ok(Vec::new());
     }
 
-    // Estimate: assume average line is 80 chars
-    let estimated_bytes = n * 80;
-    let start_pos = if estimated_bytes >= file_size as usize {
-        0
-    } else {
-        file_size - estimated_bytes as u64
-    };
+    let mut read_bytes = (min_lines as u64) * 80;
 
-    file.seek(SeekFrom::Start(start_pos))?;
+    loop {
+        let start_pos = if read_bytes >= file_size {
+            0
+        } else {
+            file_size - read_bytes
+        };
 
-    let reader = BufReader::new(file);
-    let mut all_lines: Vec<String> = reader.lines().collect::<std::io::Result<_>>()?;
+        file.seek(SeekFrom::Start(start_pos))?;
 
-    // Keep only the last n lines
-    if all_lines.len() > n {
-        all_lines = all_lines.split_off(all_lines.len() - n);
+        let reader = BufReader::new(&file);
+        let all_lines: Vec<String> = reader.lines().collect::<std::io::Result<_>>()?;
+
+        if predicate(&all_lines) || start_pos == 0 {
+            return Ok(all_lines);
+        }
+
+        read_bytes *= 2;
     }
-
-    Ok(all_lines)
 }
