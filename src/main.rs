@@ -345,13 +345,7 @@ fn cmd_wait(session: &str, args: &[String]) -> Result<()> {
                 i += 2;
             }
             other => {
-                // Legacy positional: first non-flag arg is the prompt
-                if prompt.is_none() && !other.starts_with("--") {
-                    prompt = Some(other.to_string());
-                    i += 1;
-                } else {
-                    anyhow::bail!("unexpected argument: {}", other);
-                }
+                anyhow::bail!("unexpected argument: {} (use --until PROMPT to specify a prompt)", other);
             }
         }
     }
