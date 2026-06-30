@@ -71,6 +71,17 @@ via <session> wait [--until 'PROMPT>']                # wait for prompt (default
 via <session> [--delim 'PROMPT>'] [--timeout N] line  # write input and stream until delim
 ```
 
+`<session>` may be `.`, which resolves to the name of the current directory. This
+is handy with git worktrees: from each worktree, `via . <command>` talks to a
+session named after that worktree, with no per-worktree name juggling.
+
+```bash
+# From a worktree checked out at /path/to/feature-x:
+$ via . run --bg --delim 'ghci>' -- cabal repl   # session "feature-x"
+$ via . :reload                                  # reload that worktree's repl
+$ via . write ':quit'                            # tear it down
+```
+
 Low-level commands:
 
 ```

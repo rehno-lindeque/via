@@ -68,8 +68,9 @@ fn run() -> Result<i32> {
         return Ok(0);
     }
 
-    // First arg is the session name
-    let session_name = first_arg.clone();
+    // First arg is the session name. `.` resolves to the current directory's
+    // name, so `via . <command>` always targets the session for this checkout.
+    let session_name = resolve_session_name(first_arg.clone())?;
 
     if args.len() < 2 {
         // via <session> with no args — use shorthand with piped stdin
@@ -118,11 +119,26 @@ fn run() -> Result<i32> {
     }
 }
 
+/// Resolve a session name, mapping `.` to the current directory's name.
+/// Everything else is returned unchanged. This keeps `via` git-agnostic: the
+/// "session here" is simply the basename of the working directory.
+fn resolve_session_name(name: String) -> Result<String> {
+    if name == "." {
+        let cwd = env::current_dir()?;
+        cwd.file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .ok_or_else(|| anyhow::anyhow!("cannot resolve '.': cwd has no basename"))
+    } else {
+        Ok(name)
+    }
+}
+
 fn show_usage_global() {
     println!(r#"usage:
   via [--simple]                                          # list sessions (tabular format by default)
   via help                                                # this help
   via <session> help                                      # help for a specific session name
+  via . <command>                                         # '.' names the session after the current directory
   via run [--delim 'PROMPT>'] [--bg] -- <cmd> ...         # start session with auto-generated name
   via <session> run [--delim 'PROMPT>'] [--bg] -- <cmd>   # start a named session running <cmd>
   via <session> wait [--until 'PROMPT>'] [--timeout N]    # wait for prompt (default: stored delim)
